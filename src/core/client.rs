@@ -27,8 +27,8 @@ struct RetryConfig {
     /// Whether to add jitter to backoff (default: true).
 
     #[allow(dead_code)]
-    /// Wether to add jitter to backoff (default: false).
-    /// requires the `jitter` feature (pulls in `fastrand`).
+    /// Whether to add jitter to backoff.
+    /// turn on the `jitter` feature to use (pulls in `fastrand`).
     use_jitter: bool,
 }
 
@@ -38,7 +38,7 @@ impl Default for RetryConfig {
             max_retries: 3,
             initial_wait: Duration::from_millis(500),
             max_wait: Duration::from_secs(20),
-            use_jitter: false,
+            use_jitter: true,
         }
     }
 }
@@ -51,6 +51,9 @@ static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 #[allow(dead_code)]
 static HTTP_STREAMING_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
+// TODO: reasoning for two different clients is connection pooling is not
+// working during tests. make sure to fix this later.
+//
 /// Returns the shared HTTP client for non-streaming requests.
 #[allow(dead_code)]
 #[cfg(not(feature = "test-access"))]
