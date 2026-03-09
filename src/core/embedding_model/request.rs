@@ -104,6 +104,7 @@ impl<M: EmbeddingModel> EmbeddingModelRequestBuilder<M> {
             options: EmbeddingModelOptions::builder()
                 .input(vec![])
                 .dimensions(None)
+                .headers(None)
                 .build()
                 .unwrap(),
             state: std::marker::PhantomData,
