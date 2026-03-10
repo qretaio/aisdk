@@ -539,7 +539,6 @@ mod tests {
             .and(header("content-type", "application/json"))
             .and(body_partial_json(json!({
                 "model": "claude-sonnet-4-0",
-                "max_tokens": 256,
                 "system": "You are helpful",
                 "messages": [
                     {
@@ -549,7 +548,7 @@ mod tests {
                 ],
                 "thinking": {
                     "type": "enable",
-                    "budget_tokens": 128
+                    "budget_tokens": 5000
                 },
                 "tools": [
                     {
@@ -583,7 +582,6 @@ mod tests {
             .reasoning_effort(ReasoningEffort::Medium)
             .with_tool(sum_tool())
             .build();
-        request.max_output_tokens = Some(256);
 
         let response = request
             .generate_text()
@@ -642,7 +640,6 @@ mod tests {
             .reasoning_effort(ReasoningEffort::Medium)
             .with_tool(sum_tool())
             .build();
-        request.max_output_tokens = Some(256);
 
         let mut stream = request
             .stream_text()
@@ -688,10 +685,9 @@ mod tests {
         let body = body_json(&request);
         assert_eq!(body["model"], json!("claude-sonnet-4-0"));
         assert_eq!(body["stream"], json!(true));
-        assert_eq!(body["max_tokens"], json!(256));
         assert_eq!(body["system"], json!("You are helpful"));
         assert_eq!(body["thinking"]["type"], json!("enable"));
-        assert_eq!(body["thinking"]["budget_tokens"], json!(128));
+        assert_eq!(body["thinking"]["budget_tokens"], json!(5000));
 
         let messages = body["messages"]
             .as_array()

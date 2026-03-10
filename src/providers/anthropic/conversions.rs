@@ -18,8 +18,7 @@ impl From<LanguageModelOptions> for AnthropicOptions {
         // time checks if not set in core
         let max_tokens = options.max_output_tokens.unwrap_or(10_000);
 
-        request.max_tokens(max_tokens);
-        // TODO: temperature, top_p, top_k, and stop_sequences are not mapped for Anthropic yet.
+        // TODO: temperature, top_p, top_k, stop_sequences, and max_tokens are not mapped for Anthropic yet.
         // Add support once provider behavior is confirmed and covered.
 
         if let Some(system) = options.system
@@ -194,13 +193,11 @@ mod tests {
         let options = LanguageModelOptions {
             system: Some("You are helpful".to_string()),
             messages: vec![Message::User("Hello".to_string().into()).into()],
-            max_output_tokens: Some(256),
             ..Default::default()
         };
 
         let req: AnthropicOptions = options.into();
 
-        assert_eq!(req.max_tokens, 256);
         assert_eq!(req.system.as_deref(), Some("You are helpful"));
         assert_eq!(req.messages.len(), 1);
 
