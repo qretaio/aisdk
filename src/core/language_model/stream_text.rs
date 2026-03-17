@@ -84,7 +84,6 @@ impl<M: LanguageModel> LanguageModelRequest<M> {
         }));
 
         let (tx, stream) = LanguageModelStream::new();
-        let _ = tx.send(LanguageModelStreamChunkType::TextStart);
 
         let mut model = self.model.clone();
 
@@ -164,12 +163,7 @@ impl<M: LanguageModel> LanguageModelRequest<M> {
                                                         usage,
                                                     )),
                                                 ));
-                                                // Emit tool call info BEFORE execution
-                                                let _ = tx.send(
-                                                    LanguageModelStreamChunkType::ToolCallStart(
-                                                        tool_info.tool.clone(),
-                                                    ),
-                                                );
+
                                                 options.handle_tool_call(tool_info).await;
                                                 // Emit tool result AFTER execution (last message is the result)
                                                 if let Some(TaggedMessage {
@@ -205,23 +199,12 @@ impl<M: LanguageModel> LanguageModelRequest<M> {
                                             break;
                                         }
                                     }
-                                    LanguageModelStreamChunk::Delta(other) => match other {
-                                        // Propagate text and reasoning chunks
-                                        LanguageModelStreamChunkType::TextDelta(_)
-                                        | LanguageModelStreamChunkType::ReasoningDelta(_)
-                                        | LanguageModelStreamChunkType::ToolCallDelta { .. } => {
-                                            let _ = tx.send(other.clone());
-                                        }
-                                        _ => {}
-                                    },
+                                    LanguageModelStreamChunk::Delta(other) => {
+                                        let _ = tx.send(other.clone());
+                                    }
                                 }
                             }
-                            // When both text and tool_use blocks arrive in a
-                            // single MessageStop event, Done(Text) sets
-                            // stop_reason = Finish before Done(ToolCall) is
-                            // processed. Clear stop_reason so the agentic loop
-                            // continues and makes the follow-up API call with
-                            // the tool result.
+                            // Prioritize continued tool call execution over text finishes
                             if had_tool_call
                                 && matches!(options.stop_reason, Some(StopReason::Finish))
                             {
