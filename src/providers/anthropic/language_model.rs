@@ -164,7 +164,9 @@ impl<M: ModelName> LanguageModel for Anthropic<M> {
                                 state
                                     .content_blocks
                                     .insert(index, AccumulatedBlock::Text(String::new()));
-                                Some(Ok(unsupported("ContentBlockStart::Text")))
+                                Some(Ok(vec![LanguageModelStreamChunk::Delta(
+                                    LanguageModelStreamChunkType::TextStart,
+                                )]))
                             }
                             AnthropicContentBlock::Thinking { .. } => {
                                 state
@@ -173,7 +175,9 @@ impl<M: ModelName> LanguageModel for Anthropic<M> {
                                         thinking: String::new(),
                                         signature: None,
                                     });
-                                Some(Ok(unsupported("ContentBlockStart::Thinking")))
+                                Some(Ok(vec![LanguageModelStreamChunk::Delta(
+                                    LanguageModelStreamChunkType::ReasoningStart,
+                                )]))
                             }
                             AnthropicContentBlock::RedactedThinking { data } => {
                                 state.content_blocks.insert(
@@ -186,12 +190,14 @@ impl<M: ModelName> LanguageModel for Anthropic<M> {
                                 state.content_blocks.insert(
                                     index,
                                     AccumulatedBlock::ToolUse {
-                                        id,
-                                        name,
+                                        id: id.clone(),
+                                        name: name.clone(),
                                         accumulated_json: String::new(),
                                     },
                                 );
-                                Some(Ok(unsupported("ContentBlockStart::ToolUse")))
+                                Some(Ok(vec![LanguageModelStreamChunk::Delta(
+                                    LanguageModelStreamChunkType::ToolCallStart(ToolDetails { name, id }),
+                                )]))
                             }
                         },
                         AnthropicStreamEvent::ContentBlockDelta { index, delta } => {
@@ -244,9 +250,15 @@ impl<M: ModelName> LanguageModel for Anthropic<M> {
                                 unreachable!("Anthropic accumulator must be initialized on AnthropicStreamEvent::ContentBlockStart")
                             }
                         }
-                        AnthropicStreamEvent::ContentBlockStop { .. } => {
-                            Some(Ok(unsupported("ContentBlockStop")))
-                        }
+                        AnthropicStreamEvent::ContentBlockStop { index } => {
+                                match state.content_blocks.get(&index) {
+                                    Some(AccumulatedBlock::Text(_)) => Some(Ok(vec![LanguageModelStreamChunk::Delta(LanguageModelStreamChunkType::TextEnd)])),
+                                    Some(AccumulatedBlock::Thinking { .. }) => Some(Ok(vec![LanguageModelStreamChunk::Delta(LanguageModelStreamChunkType::ReasoningEnd)])),
+                                    Some(AccumulatedBlock::RedactedThinking(_)) => Some(Ok(vec![LanguageModelStreamChunk::Delta(LanguageModelStreamChunkType::NotSupported("RedactedThinking".to_string()))])),
+                                    Some(AccumulatedBlock::ToolUse { .. }) => None,
+                                    None => Some(Ok(vec![LanguageModelStreamChunk::Delta(LanguageModelStreamChunkType::Failed("An end chunk returned for an improperly initialized stream".to_string()))])),
+                                }
+                            }
                         AnthropicStreamEvent::MessageDelta { usage, .. } => {
                             state.usage = Some(usage);
                             Some(Ok(unsupported("MessageDelta")))
