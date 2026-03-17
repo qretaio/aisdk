@@ -128,6 +128,18 @@ pub(crate) enum OpenAiStreamEvent {
         delta: String,
         logprobs: Option<Vec<LogProbs>>,
     },
+
+    /// Emitted when a text delta is done.
+    #[serde(rename = "response.output_text.done")]
+    ResponseOutputTextDone {
+        sequence_number: u64,
+        item_id: String,
+        output_index: u32,
+        content_index: u32,
+        delta: String,
+        logprobs: Option<Vec<LogProbs>>,
+    },
+
     /// Emitted when a delta is added to a reasoning summary text.
     #[serde(rename = "response.reasoning_summary_text.delta")]
     ResponseReasoningSummaryTextDelta {
@@ -137,6 +149,17 @@ pub(crate) enum OpenAiStreamEvent {
         summary_index: u32,
         delta: String,
     },
+
+    /// Emitted when a reasoning summary text is done.
+    #[serde(rename = "response.reasoning_summary_text.done")]
+    ResponseReasoningSummaryTextDone {
+        sequence_number: u64,
+        item_id: String,
+        output_index: u32,
+        summary_index: u32,
+        text: String,
+    },
+
     /// Emitted when an error occurs.
     #[serde(rename = "error")]
     ResponseError {
