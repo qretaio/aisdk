@@ -668,7 +668,7 @@ mod tests {
 
         if matches!(
             first_item,
-            crate::core::language_model::LanguageModelStreamChunkType::Start
+            crate::core::language_model::LanguageModelStreamChunkType::TextStart
         ) {
             first_item = tokio::time::timeout(Duration::from_secs(1), stream.stream.next())
                 .await
@@ -677,10 +677,10 @@ mod tests {
         }
 
         match first_item {
-            crate::core::language_model::LanguageModelStreamChunkType::Text(text) => {
+            crate::core::language_model::LanguageModelStreamChunkType::TextDelta(text) => {
                 assert!(!text.is_empty())
             }
-            _ => panic!("Expected Text chunk"),
+            _ => panic!("Expected TextDelta chunk"),
         }
 
         let request = request_handle
@@ -743,7 +743,7 @@ mod tests {
 
         if matches!(
             first_item,
-            crate::core::language_model::LanguageModelStreamChunkType::Start
+            crate::core::language_model::LanguageModelStreamChunkType::TextStart
         ) {
             first_item = tokio::time::timeout(Duration::from_secs(1), stream.stream.next())
                 .await
@@ -752,10 +752,10 @@ mod tests {
         }
 
         match first_item {
-            crate::core::language_model::LanguageModelStreamChunkType::Text(text) => {
+            crate::core::language_model::LanguageModelStreamChunkType::TextDelta(text) => {
                 assert!(!text.is_empty())
             }
-            _ => panic!("Expected Text chunk"),
+            _ => panic!("Expected TextDelta chunk"),
         }
 
         let request = request_handle
