@@ -273,9 +273,9 @@ pub(crate) trait LanguageModelClient {
 
         let method = self.method();
         let mut headers = self.headers();
-        if let Some(ref extra) = additional_headers
-            && let Ok(extra_map) = reqwest::header::HeaderMap::try_from(extra)
-        {
+        if let Some(extra) = additional_headers {
+            let extra_map = reqwest::header::HeaderMap::try_from(&extra)
+                .map_err(|e| Error::InvalidInput(format!("Invalid headers: {}", e)))?;
             headers.extend(extra_map);
         }
         let query_params = self.query_params();
@@ -314,11 +314,11 @@ pub(crate) trait LanguageModelClient {
 
         let url = join_url(base_url, &self.path())?;
 
-        let mut all_headers = self.headers();
-        if let Some(ref extra) = additional_headers
-            && let Ok(extra_map) = reqwest::header::HeaderMap::try_from(extra)
-        {
-            all_headers.extend(extra_map);
+        let mut headers = self.headers();
+        if let Some(extra) = additional_headers {
+            let extra_map = reqwest::header::HeaderMap::try_from(&extra)
+                .map_err(|e| Error::InvalidInput(format!("Invalid headers: {}", e)))?;
+            headers.extend(extra_map);
         }
 
         let req_body = {
@@ -332,7 +332,7 @@ pub(crate) trait LanguageModelClient {
         // and should be handled by retry logic in the provider's stream_text() method
         let events_stream = client
             .request(self.method(), url.clone())
-            .headers(all_headers)
+            .headers(headers)
             .query(&self.query_params())
             .body(req_body)
             .eventsource()
@@ -374,7 +374,11 @@ pub(crate) trait EmbeddingClient {
     fn body(&self) -> reqwest::Body;
     fn headers(&self) -> reqwest::header::HeaderMap;
 
-    async fn send(&self, base_url: impl IntoUrl) -> Result<Self::Response> {
+    async fn send(
+        &self,
+        base_url: impl IntoUrl,
+        additional_headers: Option<HashMap<String, String>>,
+    ) -> Result<Self::Response> {
         let base_url = base_url
             .into_url()
             .map_err(|_| Error::InvalidInput("Invalid base URL".into()))?;
@@ -396,7 +400,12 @@ pub(crate) trait EmbeddingClient {
         };
 
         let method = self.method();
-        let headers = self.headers();
+        let mut headers = self.headers();
+        if let Some(extra) = additional_headers {
+            let extra_map = reqwest::header::HeaderMap::try_from(&extra)
+                .map_err(|e| Error::InvalidInput(format!("Invalid headers: {}", e)))?;
+            headers.extend(extra_map);
+        }
         let query_params = self.query_params();
         let config = RetryConfig::default();
 
