@@ -2,6 +2,7 @@
 
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Settings for the Anthropic provider.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
@@ -20,6 +21,12 @@ pub struct AnthropicProviderSettings {
     /// default "/messages".
     pub path: Option<String>,
 
+    /// Extra headers to include in every request made with this provider.
+    /// These are merged with any request-level headers, with request-level taking priority.
+    #[serde(skip)]
+    #[builder(setter(skip))]
+    pub headers: Option<HashMap<String, String>>,
+
     /// Extra body fields to include in every request made with this provider.
     /// These are merged with any request-level body, with request-level taking priority.
     #[serde(skip)]
@@ -35,6 +42,7 @@ impl Default for AnthropicProviderSettings {
             base_url: "https://api.anthropic.com/v1/".to_string(),
             api_key: std::env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
             path: None,
+            headers: None,
             body: None,
         }
     }

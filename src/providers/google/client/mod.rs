@@ -1,5 +1,5 @@
 //! Client implementation for the Google provider.
-use crate::core::client::{EmbeddingClient, LanguageModelClient, merge_body};
+use crate::core::client::{EmbeddingClient, LanguageModelClient, merge_body, merge_headers};
 use crate::error::{Error, Result};
 use crate::providers::google::{Google, ModelName};
 use derive_builder::Builder;
@@ -22,6 +22,9 @@ pub(crate) struct GoogleOptions {
     #[serde(skip)]
     #[builder(default)]
     pub(crate) extra_body: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(skip)]
+    #[builder(default)]
+    pub(crate) extra_headers: Option<std::collections::HashMap<String, String>>,
 }
 
 impl GoogleOptions {
@@ -38,6 +41,9 @@ pub(crate) struct GoogleEmbeddingOptions {
     #[serde(skip)]
     #[builder(default)]
     pub(crate) extra_body: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(skip)]
+    #[builder(default)]
+    pub(crate) extra_headers: Option<std::collections::HashMap<String, String>>,
 }
 
 impl<M: ModelName> LanguageModelClient for Google<M> {
@@ -61,11 +67,15 @@ impl<M: ModelName> LanguageModelClient for Google<M> {
         reqwest::Method::POST
     }
 
-    fn headers(&self) -> reqwest::header::HeaderMap {
+    fn headers(&self) -> Result<reqwest::header::HeaderMap> {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
         headers.insert("x-goog-api-key", self.settings.api_key.parse().unwrap());
-        headers
+        merge_headers(
+            headers,
+            self.settings.headers.as_ref(),
+            self.lm_options.extra_headers.as_ref(),
+        )
     }
 
     fn query_params(&self) -> Vec<(&str, &str)> {
@@ -149,11 +159,15 @@ impl<M: ModelName> EmbeddingClient for Google<M> {
         reqwest::Method::POST
     }
 
-    fn headers(&self) -> reqwest::header::HeaderMap {
+    fn headers(&self) -> Result<reqwest::header::HeaderMap> {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
         headers.insert("x-goog-api-key", self.settings.api_key.parse().unwrap());
-        headers
+        merge_headers(
+            headers,
+            self.settings.headers.as_ref(),
+            self.embedding_options.extra_headers.as_ref(),
+        )
     }
 
     fn query_params(&self) -> Vec<(&str, &str)> {

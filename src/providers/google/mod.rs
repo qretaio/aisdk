@@ -64,6 +64,7 @@ impl Google<DynamicModel> {
             model: model_name.clone(),
             requests: Vec::new(),
             extra_body: None,
+            extra_headers: None,
         };
 
         Self {
@@ -87,6 +88,7 @@ impl<M: ModelName> Default for Google<M> {
             model: M::MODEL_NAME.to_string(),
             requests: Vec::new(),
             extra_body: None,
+            extra_headers: None,
         };
 
         Self {
@@ -168,6 +170,12 @@ impl<M: ModelName> GoogleBuilder<M> {
         self
     }
 
+    /// Sets extra headers to merge into every request.
+    pub fn headers(mut self, headers: std::collections::HashMap<String, String>) -> Self {
+        self.settings.headers = Some(headers);
+        self
+    }
+
     /// Sets extra body fields to merge into every request.
     pub fn body(mut self, body: serde_json::Value) -> Self {
         if let serde_json::Value::Object(map) = body {
@@ -192,6 +200,7 @@ impl<M: ModelName> GoogleBuilder<M> {
             model: model_name,
             requests: Vec::new(),
             extra_body: None,
+            extra_headers: None,
         };
 
         Ok(Google {

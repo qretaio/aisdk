@@ -87,6 +87,7 @@ impl From<LanguageModelOptions> for GenerateContentRequest {
 impl From<LanguageModelOptions> for GoogleOptions {
     fn from(options: LanguageModelOptions) -> Self {
         let extra_body = options.body.clone();
+        let extra_headers = options.headers.clone();
         let request: GenerateContentRequest = options.into();
 
         GoogleOptions {
@@ -94,6 +95,7 @@ impl From<LanguageModelOptions> for GoogleOptions {
             request: Some(request),
             streaming: false,
             extra_body,
+            extra_headers,
         }
     }
 }
@@ -194,6 +196,7 @@ impl From<types::UsageMetadata> for Usage {
 impl From<EmbeddingModelOptions> for GoogleEmbeddingOptions {
     fn from(value: EmbeddingModelOptions) -> Self {
         let extra_body = value.body.clone();
+        let extra_headers = value.headers.clone();
         let requests = value
             .input
             .into_iter()
@@ -216,6 +219,7 @@ impl From<EmbeddingModelOptions> for GoogleEmbeddingOptions {
             model: String::new(), // will be set in embedding_model.rs
             requests,
             extra_body,
+            extra_headers,
         }
     }
 }

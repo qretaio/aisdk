@@ -24,14 +24,11 @@ impl<M: ModelName> LanguageModel for OpenAIChatCompletions<M> {
         &mut self,
         options: LanguageModelOptions,
     ) -> Result<LanguageModelResponse> {
-        let additional_headers = options.headers.clone();
         let mut options: client::ChatCompletionsOptions = options.into();
         options.model = self.options.model.clone();
         self.options = options;
 
-        let response: types::ChatCompletionsResponse = self
-            .send(&self.settings.base_url, additional_headers)
-            .await?;
+        let response: types::ChatCompletionsResponse = self.send(&self.settings.base_url).await?;
 
         // Convert choices to LanguageModelResponse
         let mut contents = Vec::new();
@@ -65,7 +62,6 @@ impl<M: ModelName> LanguageModel for OpenAIChatCompletions<M> {
     }
 
     async fn stream_text(&mut self, options: LanguageModelOptions) -> Result<ProviderStream> {
-        let additional_headers = options.headers.clone();
         let mut options: client::ChatCompletionsOptions = options.into();
         options.model = self.options.model.clone();
         options.stream = Some(true);
@@ -75,9 +71,7 @@ impl<M: ModelName> LanguageModel for OpenAIChatCompletions<M> {
         // open ai compatible providers
         self.options = options;
 
-        let stream = self
-            .send_and_stream(&self.settings.base_url, additional_headers)
-            .await?;
+        let stream = self.send_and_stream(&self.settings.base_url).await?;
 
         // State for accumulating tool calls across chunks
         use std::collections::HashMap;

@@ -240,6 +240,30 @@ where
     Ok(reqwest::Body::from(body_bytes))
 }
 
+/// Merges default, provider-level, and request-level headers.
+/// Request-level headers take priority over provider-level headers,
+/// which take priority over the provider defaults.
+#[allow(dead_code)]
+pub(crate) fn merge_headers(
+    mut default_headers: reqwest::header::HeaderMap,
+    provider_level: Option<&HashMap<String, String>>,
+    request_level: Option<&HashMap<String, String>>,
+) -> Result<reqwest::header::HeaderMap> {
+    if let Some(provider_headers) = provider_level {
+        let provider_headers = reqwest::header::HeaderMap::try_from(provider_headers)
+            .map_err(|e| Error::InvalidInput(format!("Invalid headers: {}", e)))?;
+        default_headers.extend(provider_headers);
+    }
+
+    if let Some(request_headers) = request_level {
+        let request_headers = reqwest::header::HeaderMap::try_from(request_headers)
+            .map_err(|e| Error::InvalidInput(format!("Invalid headers: {}", e)))?;
+        default_headers.extend(request_headers);
+    }
+
+    Ok(default_headers)
+}
+
 #[allow(dead_code)]
 pub(crate) trait LanguageModelClient {
     type Response: DeserializeOwned + std::fmt::Debug + Clone;
@@ -249,13 +273,9 @@ pub(crate) trait LanguageModelClient {
     fn method(&self) -> reqwest::Method;
     fn query_params(&self) -> Vec<(&str, &str)>;
     fn body(&self) -> Result<reqwest::Body>;
-    fn headers(&self) -> reqwest::header::HeaderMap;
+    fn headers(&self) -> Result<reqwest::header::HeaderMap>;
 
-    async fn send(
-        &self,
-        base_url: impl IntoUrl,
-        additional_headers: Option<HashMap<String, String>>,
-    ) -> Result<Self::Response> {
+    async fn send(&self, base_url: impl IntoUrl) -> Result<Self::Response> {
         let url = join_url(base_url, &self.path())?;
 
         let body_bytes = {
@@ -270,19 +290,13 @@ pub(crate) trait LanguageModelClient {
         };
 
         let method = self.method();
-        let mut headers = self.headers();
-        if let Some(extra) = additional_headers {
-            let extra_map = reqwest::header::HeaderMap::try_from(&extra)
-                .map_err(|e| Error::InvalidInput(format!("Invalid headers: {}", e)))?;
-            headers.extend(extra_map);
-        }
         let query_params = self.query_params();
         let config = RetryConfig::default();
 
         retry_request(
             url,
             method,
-            headers,
+            self.headers()?,
             query_params,
             move || reqwest::Body::from(body_bytes.clone()),
             config,
@@ -301,7 +315,6 @@ pub(crate) trait LanguageModelClient {
     async fn send_and_stream(
         &self,
         base_url: impl IntoUrl,
-        additional_headers: Option<HashMap<String, String>>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<Self::StreamEvent>> + Send>>>
     where
         Self::StreamEvent: Send + 'static,
@@ -311,19 +324,12 @@ pub(crate) trait LanguageModelClient {
 
         let url = join_url(base_url, &self.path())?;
 
-        let mut headers = self.headers();
-        if let Some(extra) = additional_headers {
-            let extra_map = reqwest::header::HeaderMap::try_from(&extra)
-                .map_err(|e| Error::InvalidInput(format!("Invalid headers: {}", e)))?;
-            headers.extend(extra_map);
-        }
-
         // Establish the event source stream directly
         // Note: Status code errors (including 429) will be surfaced as stream events
         // and should be handled by retry logic in the provider's stream_text() method
         let events_stream = client
             .request(self.method(), url.clone())
-            .headers(headers)
+            .headers(self.headers()?)
             .query(&self.query_params())
             .body(self.body()?)
             .eventsource()
@@ -363,13 +369,9 @@ pub(crate) trait EmbeddingClient {
     fn method(&self) -> reqwest::Method;
     fn query_params(&self) -> Vec<(&str, &str)>;
     fn body(&self) -> Result<reqwest::Body>;
-    fn headers(&self) -> reqwest::header::HeaderMap;
+    fn headers(&self) -> Result<reqwest::header::HeaderMap>;
 
-    async fn send(
-        &self,
-        base_url: impl IntoUrl,
-        additional_headers: Option<HashMap<String, String>>,
-    ) -> Result<Self::Response> {
+    async fn send(&self, base_url: impl IntoUrl) -> Result<Self::Response> {
         let base_url = base_url
             .into_url()
             .map_err(|_| Error::InvalidInput("Invalid base URL".into()))?;
@@ -391,19 +393,13 @@ pub(crate) trait EmbeddingClient {
         };
 
         let method = self.method();
-        let mut headers = self.headers();
-        if let Some(extra) = additional_headers {
-            let extra_map = reqwest::header::HeaderMap::try_from(&extra)
-                .map_err(|e| Error::InvalidInput(format!("Invalid headers: {}", e)))?;
-            headers.extend(extra_map);
-        }
         let query_params = self.query_params();
         let config = RetryConfig::default();
 
         retry_request(
             url,
             method,
-            headers,
+            self.headers()?,
             query_params,
             move || reqwest::Body::from(body_bytes.clone()),
             config,
@@ -1052,5 +1048,74 @@ mod tests {
             .expect_err("non-object bodies should fail");
 
         assert!(matches!(err, Error::Other(_)));
+    }
+
+    #[test]
+    fn test_merge_headers_without_overrides() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_static("Bearer test-key"),
+        );
+
+        let merged = merge_headers(headers.clone(), None, None).expect("headers should merge");
+
+        assert_eq!(
+            merged.get(reqwest::header::AUTHORIZATION),
+            headers.get(reqwest::header::AUTHORIZATION)
+        );
+        assert_eq!(merged.len(), 1);
+    }
+
+    #[test]
+    fn test_merge_headers_request_overrides_provider_level_headers() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+
+        let provider = HashMap::from([
+            ("x-trace-id".to_string(), "provider-trace".to_string()),
+            ("x-provider".to_string(), "openai".to_string()),
+        ]);
+        let request = HashMap::from([
+            ("x-trace-id".to_string(), "request-trace".to_string()),
+            ("x-request".to_string(), "generate-text".to_string()),
+        ]);
+
+        let merged =
+            merge_headers(headers, Some(&provider), Some(&request)).expect("headers should merge");
+
+        assert_eq!(merged["content-type"], "application/json");
+        assert_eq!(merged["x-trace-id"], "request-trace");
+        assert_eq!(merged["x-provider"], "openai");
+        assert_eq!(merged["x-request"], "generate-text");
+    }
+
+    #[test]
+    fn test_merge_headers_rejects_invalid_header_name() {
+        let provider = HashMap::from([("bad header".to_string(), "value".to_string())]);
+
+        let err = merge_headers(reqwest::header::HeaderMap::new(), Some(&provider), None)
+            .expect_err("invalid header name should fail");
+
+        assert_eq!(
+            err.to_string(),
+            "Invalid input: Invalid headers: invalid HTTP header name"
+        );
+    }
+
+    #[test]
+    fn test_merge_headers_rejects_invalid_header_value() {
+        let request = HashMap::from([("x-trace-id".to_string(), "\ninvalid".to_string())]);
+
+        let err = merge_headers(reqwest::header::HeaderMap::new(), None, Some(&request))
+            .expect_err("invalid header value should fail");
+
+        assert_eq!(
+            err.to_string(),
+            "Invalid input: Invalid headers: failed to parse header value"
+        );
     }
 }

@@ -49,6 +49,7 @@ impl<M: ModelName> Default for OpenAI<M> {
             dimensions: None,
             encoding_format: None,
             extra_body: None,
+            extra_headers: None,
         };
 
         Self {
@@ -94,6 +95,7 @@ impl OpenAI<DynamicModel> {
             dimensions: None,
             encoding_format: None,
             extra_body: None,
+            extra_headers: None,
         };
 
         OpenAI {
@@ -202,6 +204,12 @@ impl<M: ModelName> OpenAIBuilder<M> {
         self
     }
 
+    /// Sets extra headers to merge into every request.
+    pub fn headers(mut self, headers: std::collections::HashMap<String, String>) -> Self {
+        self.settings.headers = Some(headers);
+        self
+    }
+
     /// Sets extra body fields to merge into every request.
     pub fn body(mut self, body: serde_json::Value) -> Self {
         if let serde_json::Value::Object(map) = body {
@@ -236,6 +244,7 @@ impl<M: ModelName> OpenAIBuilder<M> {
             dimensions: None,
             encoding_format: None,
             extra_body: None,
+            extra_headers: None,
         };
 
         Ok(OpenAI {

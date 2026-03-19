@@ -1,6 +1,7 @@
 //! Defines the settings for the OpenAI provider.
 
 use derive_builder::Builder;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Builder)]
 #[builder(setter(into), default)]
@@ -21,6 +22,11 @@ pub struct OpenAIProviderSettings {
     /// such as OpenAI Codex (`/responses`).
     pub path: Option<String>,
 
+    /// Extra headers to include in every request made with this provider.
+    /// These are merged with any request-level headers, with request-level taking priority.
+    #[builder(setter(skip))]
+    pub headers: Option<HashMap<String, String>>,
+
     /// Extra body fields to include in every request made with this provider.
     /// These are merged with any request-level body, with request-level taking priority.
     #[builder(setter(skip))]
@@ -34,6 +40,7 @@ impl Default for OpenAIProviderSettings {
             base_url: "https://api.openai.com".to_string(),
             api_key: std::env::var("OPENAI_API_KEY").unwrap_or_default(),
             path: None,
+            headers: None,
             body: None,
         }
     }

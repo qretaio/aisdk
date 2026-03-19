@@ -6,7 +6,7 @@ pub(crate) mod types;
 
 pub(crate) use types::*;
 
-use crate::core::client::{EmbeddingClient, LanguageModelClient, merge_body};
+use crate::core::client::{EmbeddingClient, LanguageModelClient, merge_body, merge_headers};
 use crate::error::Error;
 use crate::providers::openai::{ModelName, OpenAI};
 use reqwest::header::CONTENT_TYPE;
@@ -27,7 +27,7 @@ impl<M: ModelName> LanguageModelClient for OpenAI<M> {
         reqwest::Method::POST
     }
 
-    fn headers(&self) -> reqwest::header::HeaderMap {
+    fn headers(&self) -> crate::error::Result<reqwest::header::HeaderMap> {
         // Default headers
         let mut default_headers = reqwest::header::HeaderMap::new();
         default_headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
@@ -39,7 +39,11 @@ impl<M: ModelName> LanguageModelClient for OpenAI<M> {
                 .unwrap(),
         );
 
-        default_headers
+        merge_headers(
+            default_headers,
+            self.settings.headers.as_ref(),
+            self.lm_options.extra_headers.as_ref(),
+        )
     }
 
     fn query_params(&self) -> Vec<(&str, &str)> {
@@ -107,7 +111,7 @@ impl<M: ModelName> EmbeddingClient for OpenAI<M> {
         reqwest::Method::POST
     }
 
-    fn headers(&self) -> reqwest::header::HeaderMap {
+    fn headers(&self) -> crate::error::Result<reqwest::header::HeaderMap> {
         // Default headers
         let mut default_headers = reqwest::header::HeaderMap::new();
         default_headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
@@ -119,7 +123,11 @@ impl<M: ModelName> EmbeddingClient for OpenAI<M> {
                 .unwrap(),
         );
 
-        default_headers
+        merge_headers(
+            default_headers,
+            self.settings.headers.as_ref(),
+            self.embedding_options.extra_headers.as_ref(),
+        )
     }
 
     fn query_params(&self) -> Vec<(&str, &str)> {

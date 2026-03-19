@@ -3,7 +3,7 @@
 use crate::{
     core::{
         capabilities::ModelName,
-        client::{EmbeddingClient, merge_body},
+        client::{EmbeddingClient, merge_body, merge_headers},
         embedding_model::{EmbeddingModel, EmbeddingModelOptions, EmbeddingModelResponse},
     },
     error::Result,
@@ -25,7 +25,7 @@ impl<M: ModelName> EmbeddingClient for OpenAIChatCompletions<M> {
         reqwest::Method::POST
     }
 
-    fn headers(&self) -> reqwest::header::HeaderMap {
+    fn headers(&self) -> Result<reqwest::header::HeaderMap> {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::CONTENT_TYPE,
@@ -35,7 +35,7 @@ impl<M: ModelName> EmbeddingClient for OpenAIChatCompletions<M> {
             reqwest::header::AUTHORIZATION,
             format!("Bearer {}", self.settings.api_key).parse().unwrap(),
         );
-        headers
+        merge_headers(headers, self.settings.headers.as_ref(), None)
     }
 
     fn query_params(&self) -> Vec<(&str, &str)> {
@@ -52,6 +52,7 @@ impl<M: ModelName> OpenAIChatCompletions<M> {
     /// Creates an embedding request body from options.
     fn create_embedding_body(&self, input: EmbeddingModelOptions) -> Result<EmbeddingOptions> {
         let extra_body = input.body.clone();
+        let extra_headers = input.headers.clone();
         Ok(EmbeddingOptions {
             input: input.input,
             model: self.options.model.clone(),
@@ -59,12 +60,12 @@ impl<M: ModelName> OpenAIChatCompletions<M> {
             dimensions: input.dimensions,
             encoding_format: None,
             extra_body,
+            extra_headers,
         })
     }
 
     /// Embeds the given input using the OpenAI Embeddings API.
     pub async fn embed(&self, input: EmbeddingModelOptions) -> Result<EmbeddingModelResponse> {
-        let headers = input.headers.clone();
         let embedding_options = self.create_embedding_body(input)?;
 
         // Create a temporary client instance for this request
@@ -73,9 +74,7 @@ impl<M: ModelName> OpenAIChatCompletions<M> {
             options: embedding_options,
         };
 
-        let response = embedding_client
-            .send(&self.settings.base_url, headers)
-            .await?;
+        let response = embedding_client.send(&self.settings.base_url).await?;
 
         // Extract embeddings from response
         Ok(response.data.into_iter().map(|e| e.embedding).collect())
@@ -99,7 +98,7 @@ impl EmbeddingClient for EmbeddingClientWrapper {
         reqwest::Method::POST
     }
 
-    fn headers(&self) -> reqwest::header::HeaderMap {
+    fn headers(&self) -> Result<reqwest::header::HeaderMap> {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::CONTENT_TYPE,
@@ -109,7 +108,11 @@ impl EmbeddingClient for EmbeddingClientWrapper {
             reqwest::header::AUTHORIZATION,
             format!("Bearer {}", self.settings.api_key).parse().unwrap(),
         );
-        headers
+        merge_headers(
+            headers,
+            self.settings.headers.as_ref(),
+            self.options.extra_headers.as_ref(),
+        )
     }
 
     fn query_params(&self) -> Vec<(&str, &str)> {

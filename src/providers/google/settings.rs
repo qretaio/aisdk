@@ -2,6 +2,7 @@
 
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Settings for the Google provider.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
@@ -20,6 +21,12 @@ pub struct GoogleProviderSettings {
     /// default dynamic path (e.g., "/v1beta/models/{model}:generateContent").
     pub path: Option<String>,
 
+    /// Extra headers to include in every request made with this provider.
+    /// These are merged with any request-level headers, with request-level taking priority.
+    #[serde(skip)]
+    #[builder(setter(skip))]
+    pub headers: Option<HashMap<String, String>>,
+
     /// Extra body fields to include in every request made with this provider.
     /// These are merged with any request-level body, with request-level taking priority.
     #[serde(skip)]
@@ -35,6 +42,7 @@ impl Default for GoogleProviderSettings {
             base_url: "https://generativelanguage.googleapis.com".to_string(),
             api_key: std::env::var("GOOGLE_API_KEY").unwrap_or_default(),
             path: None,
+            headers: None,
             body: None,
         }
     }

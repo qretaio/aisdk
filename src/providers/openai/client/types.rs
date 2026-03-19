@@ -33,6 +33,9 @@ pub(crate) struct OpenAILanguageModelOptions {
     #[serde(skip)]
     #[builder(default)]
     pub(crate) extra_body: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(skip)]
+    #[builder(default)]
+    pub(crate) extra_headers: Option<std::collections::HashMap<String, String>>,
 }
 
 /// Response structure from the OpenAI API.
@@ -454,4 +457,7 @@ pub(crate) struct OpenAIEmbeddingOptions {
     #[serde(skip)]
     #[builder(default)]
     pub(crate) extra_body: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(skip)]
+    #[builder(default)]
+    pub(crate) extra_headers: Option<std::collections::HashMap<String, String>>,
 }

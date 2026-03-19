@@ -24,8 +24,6 @@ pub struct OpenAIEmbeddingModelOptions {}
 #[async_trait]
 impl<M: ModelName> EmbeddingModel for OpenAI<M> {
     async fn embed(&self, input: EmbeddingModelOptions) -> Result<EmbeddingModelResponse> {
-        let headers = input.headers.clone();
-
         let mut model = self.clone();
 
         // Convert input to OpenAI embedding options
@@ -38,7 +36,7 @@ impl<M: ModelName> EmbeddingModel for OpenAI<M> {
         model.embedding_options = options;
 
         // Send the request
-        let response = model.send(&model.settings.base_url, headers).await?;
+        let response = model.send(&model.settings.base_url).await?;
 
         // Extract embeddings from response
         Ok(response.data.into_iter().map(|e| e.embedding).collect())
