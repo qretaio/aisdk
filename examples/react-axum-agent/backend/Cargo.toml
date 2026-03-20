@@ -6,7 +6,8 @@ edition = "2024"
 [workspace]
 
 [dependencies]
-aisdk = { path = "../../..", features = ["axum","openai"] }
+aisdk = { path = "../../..", features = ["axum", "google", "openai"] }
 axum = "0.8.8"
+dotenv = "0.15.0"
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
 tower-http = { version = "0.6.8", features = ["cors"] }
