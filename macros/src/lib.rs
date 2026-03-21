@@ -66,6 +66,7 @@ pub fn tool(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let fn_name = &input_fn.sig.ident;
     let vis = &input_fn.vis;
     let return_type = &input_fn.sig.output;
+    let is_async = input_fn.sig.asyncness.is_some();
     let block = &input_fn.block;
     let inputs = &input_fn.sig.inputs;
     let attrs = &input_fn.attrs;
@@ -173,6 +174,22 @@ pub fn tool(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     });
 
+    let execute_impl = if is_async {
+        quote! {
+            ::aisdk::core::tools::ToolExecute::from_async(|inp| async move {
+                #(#binding_tokens)*
+                #block
+            })
+        }
+    } else {
+        quote! {
+            ::aisdk::core::tools::ToolExecute::from_sync(|inp| {
+                #(#binding_tokens)*
+                #block
+            })
+        }
+    };
+
     let expanded = quote! {
         #vis fn #fn_name() #return_type  {
             // use schemars::{schema_for, JsonSchema, Schema};
@@ -195,10 +212,7 @@ pub fn tool(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 .name(#name.to_string())
                 .description(#description.to_string())
                 .input_schema(input_schema)
-                .execute(::aisdk::core::tools::ToolExecute::new(Box::new(|inp| -> std::result::Result<String, String> {
-                    #(#binding_tokens)*
-                    #block
-                })));
+                .execute(#execute_impl);
 
             tool.build().expect("Failed to build tool")
         }

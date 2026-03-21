@@ -25,6 +25,13 @@ Changelog entries are grouped by type, with the following types:
 - Added support for custom HTTP request body for `LanguageModelRequest` and all providers, allowing request body injection and overriding provider default body. by [@gaki2](https://github.com/gaki2)
 - Added support for custom HTTP request body for `EmbeddingModelRequest`, and for all providers, allowing request body injection and overriding provider default body.
 - Added Provider level HTTP headers to `LanguageModelRequest` and `EmbeddingModelRequest`. allowing request header injection on provider intialization.
+- Added async tool executor support through `ToolExecute::from_async(...)`.
+- Added support for `#[tool] pub async fn ...` tool bodies.
+
+### Changed
+
+- `ToolExecute` now uses a trait-based executor abstraction internally, allowing both synchronous and asynchronous tool executors behind the same `Tool` API.
+- `ToolExecute::call(...)` is now async and must be awaited. This is a breaking change for direct callers of the tool executor API.
 
 ## [0.5.2] - 2026-02-25
 

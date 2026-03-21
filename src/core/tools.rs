@@ -49,12 +49,11 @@
 //!     name: "sum".to_string(),
 //!     description: "Adds two numbers together.".to_string(),
 //!     input_schema: schema_for!(SumInput),
-//!     execute:
-//!         ToolExecute::new(Box::new(|params: Value| {
-//!             let a = params["a"].as_u64().unwrap();
-//!             let b = params["b"].as_u64().unwrap();
-//!             Ok(format!("{}", a + b))
-//!         })),
+//!     execute: ToolExecute::from_sync(|params: Value| {
+//!         let a = params["a"].as_u64().unwrap();
+//!         let b = params["b"].as_u64().unwrap();
+//!         Ok(format!("{}", a + b))
+//!     }),
 //! };
 //!
 //! assert_eq!(tool.name, "sum");
@@ -69,37 +68,77 @@ use schemars::Schema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Debug;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use tokio::task::JoinHandle;
 
-/// A function that will be called when the tool is executed.
-pub type ToolFn = Box<dyn Fn(Value) -> std::result::Result<String, String> + Send + Sync>;
+/// The output returned by a tool executor before SDK error conversion.
+pub type ToolOutput = std::result::Result<String, String>;
+
+/// A boxed future returned by a tool executor.
+pub type ToolFuture = Pin<Box<dyn Future<Output = ToolOutput> + Send>>;
+
+type SyncToolFn = dyn Fn(Value) -> ToolOutput + Send + Sync;
+type AsyncToolFn = dyn Fn(Value) -> ToolFuture + Send + Sync;
+
+#[derive(Clone)]
+enum ToolExecuteInner {
+    Sync(Arc<SyncToolFn>),
+    Async(Arc<AsyncToolFn>),
+}
 
 /// Holds the function that will be called when the tool is executed. the function
 /// should take a single argument of type `Value` and returns a
-/// `Result<String, String>`.
+/// `ToolOutput`.
 #[derive(Clone)]
 pub struct ToolExecute {
-    inner: Arc<ToolFn>,
+    inner: ToolExecuteInner,
 }
 
 impl ToolExecute {
     /// Calls the tool with the given input.
-    pub fn call(&self, map: Value) -> Result<String> {
-        (*self.inner)(map).map_err(Error::ToolCallError)
+    pub async fn call(&self, map: Value) -> Result<String> {
+        match &self.inner {
+            ToolExecuteInner::Sync(f) => (f)(map).map_err(Error::ToolCallError),
+            ToolExecuteInner::Async(f) => (f)(map).await.map_err(Error::ToolCallError),
+        }
     }
 
     /// Creates a new `ToolExecute` instance with the given function.
     /// The function should take a single argument of type `Value` and return a
-    /// `Result<String, String>`.
-    pub fn new(f: ToolFn) -> Self {
-        Self { inner: Arc::new(f) }
+    /// `ToolOutput`.
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(Value) -> ToolOutput + Send + Sync + 'static,
+    {
+        Self::from_sync(f)
+    }
+
+    /// Creates a new `ToolExecute` instance from a synchronous function.
+    pub fn from_sync<F>(f: F) -> Self
+    where
+        F: Fn(Value) -> ToolOutput + Send + Sync + 'static,
+    {
+        Self {
+            inner: ToolExecuteInner::Sync(Arc::new(f)),
+        }
+    }
+
+    /// Creates a new `ToolExecute` instance from an asynchronous function.
+    pub fn from_async<F, Fut>(f: F) -> Self
+    where
+        F: Fn(Value) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ToolOutput> + Send + 'static,
+    {
+        Self {
+            inner: ToolExecuteInner::Async(Arc::new(move |input| Box::pin(f(input)))),
+        }
     }
 }
 
 impl Default for ToolExecute {
     fn default() -> Self {
-        Self::new(Box::new(|_| Ok("".to_string())))
+        Self::new(|_| Ok("".to_string()))
     }
 }
 
@@ -133,7 +172,7 @@ impl<'de> Deserialize<'de> for ToolExecute {
 ///
 /// The execute method is responsible for executing the tool and returning the result to
 /// the language model. It takes a single argument of type `Value` and returns a
-/// `Result<String, String>`.
+/// `ToolOutput`.
 ///
 /// # Example
 /// ```
@@ -152,12 +191,11 @@ impl<'de> Deserialize<'de> for ToolExecute {
 ///     name: "sum".to_string(),
 ///     description: "Adds two numbers together.".to_string(),
 ///     input_schema: schema_for!(SumInput),
-///     execute:
-///         ToolExecute::new(Box::new(|params: Value| {
-///             let a = params["a"].as_u64().unwrap();
-///             let b = params["b"].as_u64().unwrap();
-///             Ok(format!("{}", a + b))
-///         })),
+///     execute: ToolExecute::from_sync(|params: Value| {
+///         let a = params["a"].as_u64().unwrap();
+///         let b = params["b"].as_u64().unwrap();
+///         Ok(format!("{}", a + b))
+///     }),
 /// };
 ///
 /// assert_eq!(tool.name, "sum");
@@ -216,21 +254,21 @@ impl ToolList {
     }
 
     /// Executes a tool.
-    pub async fn execute(&self, tool_info: ToolCallInfo) -> JoinHandle<Result<String>> {
-        let tools = self.tools.clone();
-        tokio::spawn(async move {
-            let tools = tools
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let tool = tools.iter().find(|tool| tool.name == tool_info.tool.name);
+    pub async fn execute(&self, tool_info: ToolCallInfo) -> Result<String> {
+        let tool = self
+            .tools
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .find(|tool| tool.name == tool_info.tool.name)
+            .cloned();
 
-            match tool {
-                Some(tool) => tool.execute.call(tool_info.input),
-                None => Err(crate::error::Error::ToolCallError(
-                    "Tool not found".to_string(),
-                )),
-            }
-        })
+        match tool {
+            Some(tool) => tool.execute.call(tool_info.input).await,
+            None => Err(crate::error::Error::ToolCallError(
+                "Tool not found".to_string(),
+            )),
+        }
     }
 }
 
@@ -333,5 +371,53 @@ impl ToolResultInfo {
     /// Sets the output of the tool.
     pub fn output(&mut self, inp: serde_json::Value) {
         self.output = Ok(inp);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Tool, ToolCallInfo, ToolExecute, ToolList};
+    use schemars::schema_for;
+    use serde::Serialize;
+    use serde_json::json;
+
+    #[derive(Serialize, schemars::JsonSchema)]
+    struct ToolInput {
+        value: String,
+    }
+
+    #[tokio::test]
+    async fn test_tool_list_executes_sync_and_async_tools() {
+        let sync_tool = Tool::builder()
+            .name("sync-tool")
+            .description("sync")
+            .input_schema(schema_for!(ToolInput))
+            .execute(ToolExecute::from_sync(|input| {
+                Ok(format!("sync:{}", input["value"].as_str().unwrap()))
+            }))
+            .build()
+            .unwrap();
+
+        let async_tool = Tool::builder()
+            .name("async-tool")
+            .description("async")
+            .input_schema(schema_for!(ToolInput))
+            .execute(ToolExecute::from_async(|input| async move {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                Ok(format!("async:{}", input["value"].as_str().unwrap()))
+            }))
+            .build()
+            .unwrap();
+
+        let tools = ToolList::new(vec![sync_tool, async_tool]);
+
+        let mut sync_call = ToolCallInfo::new("sync-tool");
+        sync_call.input(json!({ "value": "a" }));
+
+        let mut async_call = ToolCallInfo::new("async-tool");
+        async_call.input(json!({ "value": "b" }));
+
+        assert_eq!(tools.execute(sync_call).await.unwrap(), "sync:a");
+        assert_eq!(tools.execute(async_call).await.unwrap(), "async:b");
     }
 }

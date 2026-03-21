@@ -292,11 +292,7 @@ impl LanguageModelOptions {
     /// Executes a tool call and adds the result to the message history.
     pub(crate) async fn handle_tool_call(&mut self, input: &ToolCallInfo) -> &mut Self {
         if let Some(tools) = &self.tools {
-            let tool_result_task = tools.execute(input.clone()).await;
-            let tool_result = tool_result_task
-                .await
-                .map_err(|err| Error::ToolCallError(format!("Error executing tool: {err}")))
-                .and_then(|result| result);
+            let tool_result = tools.execute(input.clone()).await;
 
             let mut tool_output_infos = Vec::new();
 
