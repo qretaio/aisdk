@@ -1,124 +1,126 @@
 "use client";
 
-import "./App.css";
 import { useChat } from "@ai-sdk/react";
 import {
 	DefaultChatTransport,
-	getToolName,
 	isToolUIPart,
+	getToolName,
 	type UIMessage,
 } from "ai";
 import { useEffect, useRef, useState } from "react";
+import { ChatMessageAvatar } from "./components/ChatMessageAvatar";
+import { ChatEmptyState, ChatInputArea } from "./components/ChatInputArea";
+import {
+	ChatMessageText,
+	ToolHeader,
+	ToolInput,
+	ToolResult,
+	ToolError,
+} from "./components/AgentTools";
 
 type ToolPart = Extract<UIMessage["parts"][number], { toolCallId: string }>;
-type ToolEvent = {
-	id: string;
-	messageId: string;
-	text: string;
-};
-
-function formatToolEvent(part: ToolPart) {
-	const toolName = getToolName(part);
-	switch (part.state) {
-		case "input-streaming":
-			return part.input == null
-				? `Tool: Preparing ${toolName}...`
-				: `Tool: Preparing ${toolName}...\n${JSON.stringify(part.input, null, 2)}`;
-		case "input-available":
-			return `Tool: Executing ${toolName}...\n${JSON.stringify(part.input, null, 2)}`;
-		case "output-available":
-			return `Tool: Output\n${JSON.stringify(part.output, null, 2)}`;
-		case "output-error":
-			return `Tool: Error\n${part.errorText}`;
-		default:
-			return `Tool: ${toolName} [${part.state}]`;
-	}
-}
 
 export default function App() {
-	const { messages, sendMessage, status, error } = useChat({
+	const { messages, sendMessage, stop, status } = useChat({
 		transport: new DefaultChatTransport({
 			api: "http://localhost:8080/api/chat",
 		}),
 	});
-	const [input, setInput] = useState("what is the weather in new york?");
-	const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
-	// Keep tool updates append-only even though useChat mutates tool parts in place.
-	const seenToolEvents = useRef(new Set<string>());
 
-	useEffect(() => {
-		if (error) {
-			console.error(error);
+	const [input, setInput] = useState("");
+	const scrollRef = useRef<HTMLDivElement>(null);
+	const isLoading = status === "streaming" || status === "submitted";
+
+	const handleInputChange = (
+		e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+	) => {
+		setInput(e.target.value);
+	};
+
+	const handleSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
+		e.preventDefault();
+		if (input.trim()) {
+			sendMessage({ text: input });
+			setInput("");
 		}
-	}, [error]);
+	};
 
 	useEffect(() => {
-		const toToolEvent = (messageId: string, part: ToolPart) => {
-			const id = `${messageId}:${JSON.stringify(part)}`;
-			if (seenToolEvents.current.has(id)) {
-				return null;
-			}
-
-			seenToolEvents.current.add(id);
-			return { id, messageId, text: formatToolEvent(part) };
-		};
-
-		const nextEvents = messages.flatMap((message) =>
-			message.parts
-				.filter(isToolUIPart)
-				.map((part) => toToolEvent(message.id, part))
-				.filter((event): event is ToolEvent => event !== null),
-		);
-
-		if (nextEvents.length > 0) {
-			setToolEvents((current) => [...current, ...nextEvents]);
+		if (scrollRef.current) {
+			scrollRef.current.scrollIntoView({ behavior: "smooth" });
 		}
 	}, [messages]);
 
 	return (
-		<>
-			{messages.map((message) => {
-				const text = message.parts
-					.filter((part) => part.type === "text")
-					.map((part) => part.text)
-					.join("");
+		<div className="flex flex-col h-dvh w-full bg-zinc-950 text-zinc-50 font-sans selection:bg-zinc-800">
+			<div className="flex-1 overflow-y-auto px-4 py-8 md:px-8 space-y-8 scroll-smooth">
+				<div className="max-w-3xl mx-auto space-y-8">
+					{messages.length === 0 && <ChatEmptyState />}
 
-				if (message.role === "user") {
-					return <div key={message.id}>User: {text}</div>;
-				}
+					{messages.map((message) => {
+						return (
+							<div key={message.id} className="flex flex-row gap-4 group">
+								<ChatMessageAvatar role={message.role} />
 
-				const events = toolEvents.filter(
-					(entry) => entry.messageId === message.id,
-				);
-				return (
-					<div key={message.id}>
-						{events.map((entry) => (
-							<pre key={entry.id}>{entry.text}</pre>
-						))}
-						{text ? <div>AI: {text}</div> : null}
-					</div>
-				);
-			})}
+								<div className="flex flex-col gap-2 min-w-0 flex-1 items-start">
+									{message.parts?.map((part, index) => {
+										const partKey = `${message.id}-${index}`;
 
-			<form
-				onSubmit={(e) => {
-					e.preventDefault();
-					if (input.trim()) {
-						sendMessage({ text: input });
-						setInput("");
-					}
-				}}
-			>
-				<input
-					value={input}
-					onChange={(e) => setInput(e.target.value)}
-					disabled={status !== "ready"}
-					placeholder="Say something..."
-				/>
-				<button type="submit" disabled={status !== "ready"}>
-					Submit
-				</button>
-			</form>
-		</>
+										if (part.type === "text" && part.text) {
+											return <ChatMessageText key={partKey} text={part.text} />;
+										}
+
+										if (isToolUIPart(part)) {
+											const toolPart = part as ToolPart;
+											const toolName = getToolName(toolPart);
+											const isComplete = toolPart.state === "output-available";
+											const hasError = toolPart.state === "output-error";
+
+											return (
+												<div
+													key={partKey}
+													className="flex flex-col gap-2 mt-2 w-full font-mono text-sm"
+												>
+													<ToolHeader
+														toolName={toolName}
+														state={toolPart.state}
+														isComplete={isComplete}
+														hasError={hasError}
+													/>
+
+													{toolPart.input != null && (
+														<ToolInput input={toolPart.input} />
+													)}
+
+													{isComplete && toolPart.output != null && (
+														<ToolResult output={toolPart.output} />
+													)}
+
+													{hasError && toolPart.errorText && (
+														<ToolError errorText={toolPart.errorText} />
+													)}
+												</div>
+											);
+										}
+
+										return null;
+									})}
+								</div>
+							</div>
+						);
+					})}
+
+					<div ref={scrollRef} className="h-px bg-transparent" />
+				</div>
+			</div>
+
+			<ChatInputArea
+				input={input}
+				handleInputChange={handleInputChange}
+				handleSubmit={handleSubmit}
+				isLoading={isLoading}
+				stop={stop}
+			/>
+		</div>
 	);
 }
