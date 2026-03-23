@@ -514,7 +514,7 @@ mod tests {
             .description("stream")
             .input_schema(schema_for!(ToolInput))
             .execute(ToolExecute::from_async(|context, input| async move {
-                let _ = context.emit(LanguageModelStreamChunkType::Text(format!(
+                let _ = context.emit(LanguageModelStreamChunkType::TextDelta(format!(
                     "chunk:{}",
                     input["value"].as_str().unwrap()
                 )));
@@ -538,7 +538,9 @@ mod tests {
         );
 
         match stream.next().await {
-            Some(LanguageModelStreamChunkType::Text(text)) => assert_eq!(text, "chunk:payload"),
+            Some(LanguageModelStreamChunkType::TextDelta(text)) => {
+                assert_eq!(text, "chunk:payload")
+            }
             other => panic!("expected tool-emitted text chunk, got {other:?}"),
         }
     }

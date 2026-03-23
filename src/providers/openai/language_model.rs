@@ -101,16 +101,62 @@ impl<M: ModelName> LanguageModel for OpenAI<M> {
         };
 
         let stream = openai_stream.map(|evt_res| match evt_res {
+            Ok(client::OpenAiStreamEvent::ResponseOutputItemAdded { item, .. }) => match item {
+                // Handle "start" events
+                types::MessageItem::FunctionCall { id, name, .. } => {
+                    let mut tool_info = ToolCallInfo::new(name);
+                    tool_info.id(id.unwrap_or_default());
+
+                    Ok(vec![LanguageModelStreamChunk::Delta(
+                        LanguageModelStreamChunkType::ToolCallStart(tool_info.tool),
+                    )])
+                }
+
+                types::MessageItem::Reasoning { .. } => Ok(vec![LanguageModelStreamChunk::Delta(
+                    LanguageModelStreamChunkType::ReasoningStart,
+                )]),
+
+                types::MessageItem::OutputMessage { .. } => {
+                    Ok(vec![LanguageModelStreamChunk::Delta(
+                        LanguageModelStreamChunkType::TextStart,
+                    )])
+                }
+
+                _ => Ok(vec![]), // ignore other content types
+            },
+
             Ok(client::OpenAiStreamEvent::ResponseOutputTextDelta { delta, .. }) => {
                 Ok(vec![LanguageModelStreamChunk::Delta(
-                    LanguageModelStreamChunkType::Text(delta),
+                    LanguageModelStreamChunkType::TextDelta(delta),
                 )])
             }
+
+            Ok(client::OpenAiStreamEvent::ResponseOutputTextDone { .. }) => {
+                Ok(vec![LanguageModelStreamChunk::Delta(
+                    LanguageModelStreamChunkType::TextEnd,
+                )])
+            }
+
             Ok(client::OpenAiStreamEvent::ResponseReasoningSummaryTextDelta { delta, .. }) => {
                 Ok(vec![LanguageModelStreamChunk::Delta(
-                    LanguageModelStreamChunkType::Reasoning(delta),
+                    LanguageModelStreamChunkType::ReasoningDelta(delta),
                 )])
             }
+
+            Ok(client::OpenAiStreamEvent::ResponseReasoningSummaryTextDone { .. }) => {
+                Ok(vec![LanguageModelStreamChunk::Delta(
+                    LanguageModelStreamChunkType::ReasoningEnd,
+                )])
+            }
+
+            Ok(client::OpenAiStreamEvent::ResponseFunctionCallArgumentsDelta {
+                item_id,
+                delta,
+                ..
+            }) => Ok(vec![LanguageModelStreamChunk::Delta(
+                LanguageModelStreamChunkType::ToolCallDelta { id: item_id, delta },
+            )]),
+
             Ok(client::OpenAiStreamEvent::ResponseCompleted { response, .. }) => {
                 let mut result: Vec<LanguageModelStreamChunk> = Vec::new();
 
@@ -167,6 +213,7 @@ impl<M: ModelName> LanguageModel for OpenAI<M> {
 
                 Ok(result)
             }
+
             Ok(client::OpenAiStreamEvent::ResponseIncomplete { response, .. }) => {
                 Ok(vec![LanguageModelStreamChunk::Delta(
                     LanguageModelStreamChunkType::Incomplete(
@@ -177,15 +224,18 @@ impl<M: ModelName> LanguageModel for OpenAI<M> {
                     ),
                 )])
             }
+
             Ok(client::OpenAiStreamEvent::ResponseError { code, message, .. }) => {
                 let reason = format!("{}: {}", code.unwrap_or("unknown".to_string()), message);
                 Ok(vec![LanguageModelStreamChunk::Delta(
                     LanguageModelStreamChunkType::Failed(reason),
                 )])
             }
+
             Ok(evt) => Ok(vec![LanguageModelStreamChunk::Delta(
                 LanguageModelStreamChunkType::NotSupported(format!("{evt:?}")),
             )]),
+
             Err(e) => Err(e),
         });
 
@@ -605,7 +655,7 @@ mod tests {
 
         if matches!(
             first_item,
-            crate::core::language_model::LanguageModelStreamChunkType::Start
+            crate::core::language_model::LanguageModelStreamChunkType::TextStart
         ) {
             first_item = tokio::time::timeout(Duration::from_secs(1), stream.stream.next())
                 .await
@@ -614,10 +664,10 @@ mod tests {
         }
 
         match first_item {
-            crate::core::language_model::LanguageModelStreamChunkType::Text(text) => {
+            crate::core::language_model::LanguageModelStreamChunkType::TextDelta(text) => {
                 assert!(!text.is_empty())
             }
-            _ => panic!("Expected Text chunk"),
+            _ => panic!("Expected TextDelta chunk"),
         }
 
         let request = request_handle
@@ -696,7 +746,7 @@ mod tests {
 
         if matches!(
             first_item,
-            crate::core::language_model::LanguageModelStreamChunkType::Start
+            crate::core::language_model::LanguageModelStreamChunkType::TextStart
         ) {
             first_item = tokio::time::timeout(Duration::from_secs(1), stream.stream.next())
                 .await
@@ -705,10 +755,10 @@ mod tests {
         }
 
         match first_item {
-            crate::core::language_model::LanguageModelStreamChunkType::Text(text) => {
+            crate::core::language_model::LanguageModelStreamChunkType::TextDelta(text) => {
                 assert!(!text.is_empty())
             }
-            _ => panic!("Expected Text chunk"),
+            _ => panic!("Expected TextDelta chunk"),
         }
 
         let request = request_handle

@@ -7,7 +7,7 @@ use crate::core::language_model::{
     LanguageModelStreamChunk, LanguageModelStreamChunkType, ProviderStream,
 };
 use crate::core::messages::AssistantMessage;
-use crate::core::tools::ToolCallInfo;
+use crate::core::tools::{ToolCallInfo, ToolDetails};
 use crate::error::Result;
 use crate::providers::openai_chat_completions::OpenAIChatCompletions;
 use crate::providers::openai_chat_completions::client::{self, types};
@@ -75,7 +75,13 @@ impl<M: ModelName> LanguageModel for OpenAIChatCompletions<M> {
 
         // State for accumulating tool calls across chunks
         use std::collections::HashMap;
+        use std::collections::HashSet;
         let mut accumulated_tool_calls: HashMap<u32, (String, String, String)> = HashMap::new();
+        // Track which tool-call indices have had ToolCallStart emitted
+        let mut tool_call_start_emitted: HashSet<u32> = HashSet::new();
+        // Track open text / reasoning blocks so we can emit the matching End events
+        let mut text_open = false;
+        let mut reasoning_open = false;
 
         // Map stream events to SDK stream chunks
         let stream = stream.map(move |evt_res| match evt_res {
@@ -87,8 +93,14 @@ impl<M: ModelName> LanguageModel for OpenAIChatCompletions<M> {
                     if let Some(reasoning) = choice.delta.reasoning_content
                         && !reasoning.is_empty()
                     {
+                        if !reasoning_open {
+                            reasoning_open = true;
+                            results.push(LanguageModelStreamChunk::Delta(
+                                LanguageModelStreamChunkType::ReasoningStart,
+                            ));
+                        }
                         results.push(LanguageModelStreamChunk::Delta(
-                            LanguageModelStreamChunkType::Reasoning(reasoning),
+                            LanguageModelStreamChunkType::ReasoningDelta(reasoning),
                         ));
                     }
 
@@ -96,15 +108,29 @@ impl<M: ModelName> LanguageModel for OpenAIChatCompletions<M> {
                     if let Some(content) = choice.delta.content
                         && !content.is_empty()
                     {
+                        // Reasoning concluded once text begins
+                        if reasoning_open {
+                            reasoning_open = false;
+                            results.push(LanguageModelStreamChunk::Delta(
+                                LanguageModelStreamChunkType::ReasoningEnd,
+                            ));
+                        }
+                        if !text_open {
+                            text_open = true;
+                            results.push(LanguageModelStreamChunk::Delta(
+                                LanguageModelStreamChunkType::TextStart,
+                            ));
+                        }
                         results.push(LanguageModelStreamChunk::Delta(
-                            LanguageModelStreamChunkType::Text(content),
+                            LanguageModelStreamChunkType::TextDelta(content),
                         ));
                     }
 
                     // Accumulate tool call deltas
                     if let Some(tool_calls) = choice.delta.tool_calls {
                         for tool_call in tool_calls {
-                            let entry = accumulated_tool_calls.entry(tool_call.index).or_insert((
+                            let tool_call_index = tool_call.index;
+                            let entry = accumulated_tool_calls.entry(tool_call_index).or_insert((
                                 String::new(),
                                 String::new(),
                                 String::new(),
@@ -117,13 +143,42 @@ impl<M: ModelName> LanguageModel for OpenAIChatCompletions<M> {
 
                             // Accumulate name and arguments
                             if let Some(function) = tool_call.function {
-                                if let Some(name) = function.name {
+                                if let Some(name) = function.name
+                                    && !name.is_empty()
+                                {
                                     entry.1 = name;
                                 }
+
+                                // Emit ToolCallStart once we have both id and name
+                                if !tool_call_start_emitted.contains(&tool_call_index)
+                                    && !entry.1.is_empty()
+                                {
+                                    tool_call_start_emitted.insert(tool_call_index);
+                                    let tool_id = if entry.0.is_empty() {
+                                        format!("openai-tool-call-{tool_call_index}")
+                                    } else {
+                                        entry.0.clone()
+                                    };
+                                    results.push(LanguageModelStreamChunk::Delta(
+                                        LanguageModelStreamChunkType::ToolCallStart(ToolDetails {
+                                            id: tool_id,
+                                            name: entry.1.clone(),
+                                        }),
+                                    ));
+                                }
+
                                 if let Some(args) = function.arguments {
                                     entry.2.push_str(&args);
+                                    let tool_call_id = if entry.0.is_empty() {
+                                        format!("openai-tool-call-{tool_call_index}")
+                                    } else {
+                                        entry.0.clone()
+                                    };
                                     results.push(LanguageModelStreamChunk::Delta(
-                                        LanguageModelStreamChunkType::ToolCall(args),
+                                        LanguageModelStreamChunkType::ToolCallDelta {
+                                            id: tool_call_id,
+                                            delta: args,
+                                        },
                                     ));
                                 }
                             }
@@ -134,7 +189,42 @@ impl<M: ModelName> LanguageModel for OpenAIChatCompletions<M> {
                         let usage = chunk.usage.clone().map(|u| u.into());
 
                         match finish_reason.as_str() {
-                            "stop" | "length" => {
+                            "stop" => {
+                                if reasoning_open {
+                                    reasoning_open = false;
+                                    results.push(LanguageModelStreamChunk::Delta(
+                                        LanguageModelStreamChunkType::ReasoningEnd,
+                                    ));
+                                }
+                                if text_open {
+                                    text_open = false;
+                                    results.push(LanguageModelStreamChunk::Delta(
+                                        LanguageModelStreamChunkType::TextEnd,
+                                    ));
+                                }
+                                results.push(LanguageModelStreamChunk::Done(AssistantMessage {
+                                    content: LanguageModelResponseContentType::Text(String::new()),
+                                    usage,
+                                }));
+                            }
+                            "length" => {
+                                if reasoning_open {
+                                    reasoning_open = false;
+                                    results.push(LanguageModelStreamChunk::Delta(
+                                        LanguageModelStreamChunkType::ReasoningEnd,
+                                    ));
+                                }
+                                if text_open {
+                                    text_open = false;
+                                    results.push(LanguageModelStreamChunk::Delta(
+                                        LanguageModelStreamChunkType::TextEnd,
+                                    ));
+                                }
+                                results.push(LanguageModelStreamChunk::Delta(
+                                    LanguageModelStreamChunkType::Incomplete(
+                                        "max_tokens".to_string(),
+                                    ),
+                                ));
                                 results.push(LanguageModelStreamChunk::Done(AssistantMessage {
                                     content: LanguageModelResponseContentType::Text(String::new()),
                                     usage,
@@ -142,9 +232,20 @@ impl<M: ModelName> LanguageModel for OpenAIChatCompletions<M> {
                             }
                             "tool_calls" | "function_call" => {
                                 // Send accumulated tool calls
-                                for (id, name, args) in accumulated_tool_calls.values() {
-                                    let mut tool_info = ToolCallInfo::new(name.clone());
-                                    tool_info.id(id.clone());
+                                for (index, (id, name, args)) in &accumulated_tool_calls {
+                                    let resolved_id = if id.is_empty() {
+                                        format!("openai-tool-call-{index}")
+                                    } else {
+                                        id.clone()
+                                    };
+                                    let resolved_name = if name.is_empty() {
+                                        "unknown".to_string()
+                                    } else {
+                                        name.clone()
+                                    };
+
+                                    let mut tool_info = ToolCallInfo::new(resolved_name);
+                                    tool_info.id(resolved_id);
                                     tool_info.input(serde_json::from_str(args).unwrap_or_else(
                                         |_| serde_json::Value::Object(serde_json::Map::new()),
                                     ));
@@ -169,8 +270,13 @@ impl<M: ModelName> LanguageModel for OpenAIChatCompletions<M> {
                                     ),
                                 ));
                             }
-                            // For any unknown finish reason, treat as normal completion
-                            _ => {
+                            // For any unknown finish reason emit NotSupported then close cleanly
+                            other => {
+                                results.push(LanguageModelStreamChunk::Delta(
+                                    LanguageModelStreamChunkType::NotSupported(format!(
+                                        "Unknown finish_reason: {other}"
+                                    )),
+                                ));
                                 results.push(LanguageModelStreamChunk::Done(AssistantMessage {
                                     content: LanguageModelResponseContentType::Text(String::new()),
                                     usage,
@@ -567,13 +673,15 @@ mod tests {
             .await
             .expect("stream request should succeed");
 
+        // Consume a chunk to ensure the request has been fully received by the mock server
+        // before we inspect the captured request.
         let first_item = tokio::time::timeout(Duration::from_secs(1), stream.next())
             .await
             .expect("stream should yield an event")
             .expect("stream should not end immediately")
             .expect("stream event should parse");
 
-        assert!(first_item.is_empty());
+        assert!(!first_item.is_empty());
 
         let request = request_handle
             .await
@@ -675,13 +783,15 @@ mod tests {
             .await
             .expect("stream request should succeed");
 
+        // Consume a chunk to ensure the request has been fully received by the mock server
+        // before we inspect the captured request.
         let first_item = tokio::time::timeout(Duration::from_secs(1), stream.next())
             .await
             .expect("stream should yield an event")
             .expect("stream should not end immediately")
             .expect("stream event should parse");
 
-        assert!(first_item.is_empty());
+        assert!(!first_item.is_empty());
 
         let request = request_handle
             .await

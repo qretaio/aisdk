@@ -147,9 +147,7 @@ impl<M: ModelName> LanguageModel for Anthropic<M> {
                     match evt_res {
                     Ok(event) => match event {
                         AnthropicStreamEvent::MessageStart { .. } => {
-                            Some(Ok(vec![LanguageModelStreamChunk::Delta(
-                                LanguageModelStreamChunkType::Start,
-                            )]))
+                                Some(Ok(unsupported("MessageStart")))
                         }
                         AnthropicStreamEvent::ContentBlockStart {
                             index,
@@ -159,7 +157,9 @@ impl<M: ModelName> LanguageModel for Anthropic<M> {
                                 state
                                     .content_blocks
                                     .insert(index, AccumulatedBlock::Text(String::new()));
-                                Some(Ok(unsupported("ContentBlockStart::Text")))
+                                Some(Ok(vec![LanguageModelStreamChunk::Delta(
+                                    LanguageModelStreamChunkType::TextStart,
+                                )]))
                             }
                             AnthropicContentBlock::Thinking { .. } => {
                                 state
@@ -168,7 +168,9 @@ impl<M: ModelName> LanguageModel for Anthropic<M> {
                                         thinking: String::new(),
                                         signature: None,
                                     });
-                                Some(Ok(unsupported("ContentBlockStart::Thinking")))
+                                Some(Ok(vec![LanguageModelStreamChunk::Delta(
+                                    LanguageModelStreamChunkType::ReasoningStart,
+                                )]))
                             }
                             AnthropicContentBlock::RedactedThinking { data } => {
                                 state.content_blocks.insert(
@@ -181,12 +183,14 @@ impl<M: ModelName> LanguageModel for Anthropic<M> {
                                 state.content_blocks.insert(
                                     index,
                                     AccumulatedBlock::ToolUse {
-                                        id,
-                                        name,
+                                        id: id.clone(),
+                                        name: name.clone(),
                                         accumulated_json: String::new(),
                                     },
                                 );
-                                Some(Ok(unsupported("ContentBlockStart::ToolUse")))
+                                Some(Ok(vec![LanguageModelStreamChunk::Delta(
+                                    LanguageModelStreamChunkType::ToolCallStart(ToolDetails { name, id }),
+                                )]))
                             }
                         },
                         AnthropicStreamEvent::ContentBlockDelta { index, delta } => {
@@ -198,7 +202,7 @@ impl<M: ModelName> LanguageModel for Anthropic<M> {
                                     ) => {
                                         text.push_str(&delta_text);
                                         Some(Ok(vec![LanguageModelStreamChunk::Delta(
-                                            LanguageModelStreamChunkType::Text(delta_text),
+                                            LanguageModelStreamChunkType::TextDelta(delta_text),
                                         )]))
                                     }
                                     (
@@ -207,7 +211,7 @@ impl<M: ModelName> LanguageModel for Anthropic<M> {
                                     ) => {
                                         thinking.push_str(&delta_thinking);
                                         Some(Ok(vec![LanguageModelStreamChunk::Delta(
-                                            LanguageModelStreamChunkType::Text(delta_thinking),
+                                            LanguageModelStreamChunkType::ReasoningDelta(delta_thinking),
                                         )]))
                                     }
                                     (
@@ -217,15 +221,20 @@ impl<M: ModelName> LanguageModel for Anthropic<M> {
                                         *signature = Some(delta_signature.clone());
                                         Some(Ok(unsupported("SignatureDelta")))
                                     }
-                                    (
+                                     (
                                         AccumulatedBlock::ToolUse {
-                                            accumulated_json, ..
+                                            id,
+                                            accumulated_json,
+                                            ..
                                         },
                                         AnthropicDelta::ToolUseDelta { partial_json },
                                     ) => {
                                         accumulated_json.push_str(&partial_json);
                                         Some(Ok(vec![LanguageModelStreamChunk::Delta(
-                                            LanguageModelStreamChunkType::ToolCall(partial_json),
+                                            LanguageModelStreamChunkType::ToolCallDelta {
+                                                id: id.clone(),
+                                                delta: partial_json,
+                                            },
                                         )]))
                                     }
                                     _ => Some(Ok(unsupported("ContentBlockDelta"))),
@@ -234,9 +243,15 @@ impl<M: ModelName> LanguageModel for Anthropic<M> {
                                 unreachable!("Anthropic accumulator must be initialized on AnthropicStreamEvent::ContentBlockStart")
                             }
                         }
-                        AnthropicStreamEvent::ContentBlockStop { .. } => {
-                            Some(Ok(unsupported("ContentBlockStop")))
-                        }
+                        AnthropicStreamEvent::ContentBlockStop { index } => {
+                                match state.content_blocks.get(&index) {
+                                    Some(AccumulatedBlock::Text(_)) => Some(Ok(vec![LanguageModelStreamChunk::Delta(LanguageModelStreamChunkType::TextEnd)])),
+                                    Some(AccumulatedBlock::Thinking { .. }) => Some(Ok(vec![LanguageModelStreamChunk::Delta(LanguageModelStreamChunkType::ReasoningEnd)])),
+                                    Some(AccumulatedBlock::RedactedThinking(_)) => Some(Ok(vec![LanguageModelStreamChunk::Delta(LanguageModelStreamChunkType::NotSupported("RedactedThinking".to_string()))])),
+                                    Some(AccumulatedBlock::ToolUse { .. }) => None,
+                                    None => Some(Ok(vec![LanguageModelStreamChunk::Delta(LanguageModelStreamChunkType::Failed("An end chunk returned for an improperly initialized stream".to_string()))])),
+                                }
+                            }
                         AnthropicStreamEvent::MessageDelta { usage, .. } => {
                             state.usage = Some(usage);
                             Some(Ok(unsupported("MessageDelta")))
@@ -698,7 +713,7 @@ mod tests {
 
         if matches!(
             first_item,
-            crate::core::language_model::LanguageModelStreamChunkType::Start
+            crate::core::language_model::LanguageModelStreamChunkType::TextStart
         ) {
             first_item = tokio::time::timeout(Duration::from_secs(1), stream.stream.next())
                 .await
@@ -707,10 +722,10 @@ mod tests {
         }
 
         match first_item {
-            crate::core::language_model::LanguageModelStreamChunkType::Text(text) => {
+            crate::core::language_model::LanguageModelStreamChunkType::TextDelta(text) => {
                 assert!(!text.is_empty())
             }
-            _ => panic!("Expected Text chunk"),
+            _ => panic!("Expected TextDelta chunk"),
         }
 
         let request = request_handle
@@ -773,7 +788,7 @@ mod tests {
 
         if matches!(
             first_item,
-            crate::core::language_model::LanguageModelStreamChunkType::Start
+            crate::core::language_model::LanguageModelStreamChunkType::TextStart
         ) {
             first_item = tokio::time::timeout(Duration::from_secs(1), stream.stream.next())
                 .await
@@ -782,10 +797,10 @@ mod tests {
         }
 
         match first_item {
-            crate::core::language_model::LanguageModelStreamChunkType::Text(text) => {
+            crate::core::language_model::LanguageModelStreamChunkType::TextDelta(text) => {
                 assert!(!text.is_empty())
             }
-            _ => panic!("Expected Text chunk"),
+            _ => panic!("Expected TextDelta chunk"),
         }
 
         let request = request_handle

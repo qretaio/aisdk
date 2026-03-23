@@ -421,7 +421,7 @@ macro_rules! generate_language_model_streaming_tests {
             let mut buf = String::new();
             while let Some(chunk) = stream.next().await {
                 // println!("chunk: {:?}", chunk);
-                if let LanguageModelStreamChunkType::Text(text) = chunk {
+                if let LanguageModelStreamChunkType::TextDelta(text) = chunk {
                     buf.push_str(&text);
                 }
             }
@@ -445,7 +445,7 @@ macro_rules! generate_language_model_streaming_tests {
             let mut stream = response.stream;
             let mut chunks_received = 0;
             while let Some(chunk) = stream.next().await {
-                if let LanguageModelStreamChunkType::Text(_) = chunk {
+                if let LanguageModelStreamChunkType::TextDelta(_) = chunk {
                     chunks_received += 1;
                 }
             }
@@ -535,7 +535,7 @@ macro_rules! generate_language_model_tool_tests {
 
             let mut buf = String::new();
             while let Some(chunk) = stream.next().await {
-                if let LanguageModelStreamChunkType::Text(text) = chunk {
+                if let LanguageModelStreamChunkType::TextDelta(text) = chunk {
                     buf.push_str(&text);
                 }
             }
@@ -570,7 +570,7 @@ macro_rules! generate_language_model_tool_tests {
 
             let mut buf = String::new();
             while let Some(chunk) = stream.next().await {
-                if let LanguageModelStreamChunkType::Text(text) = chunk {
+                if let LanguageModelStreamChunkType::TextDelta(text) = chunk {
                     buf.push_str(&text);
                 }
             }
@@ -695,7 +695,7 @@ macro_rules! generate_language_model_schema_tests {
 
             let mut buf = String::new();
             while let Some(chunk) = stream.next().await {
-                if let LanguageModelStreamChunkType::Text(text) = chunk {
+                if let LanguageModelStreamChunkType::TextDelta(text) = chunk {
                     buf.push_str(&text);
                 }
             }

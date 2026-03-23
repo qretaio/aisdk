@@ -37,7 +37,9 @@ mod tests {
     #[tool]
     /// Tool that emits stream chunks through runtime context.
     pub async fn context_stream_tool(ctx: ToolContext, value: String) -> Tool {
-        let _ = ctx.emit(LanguageModelStreamChunkType::Text(format!("tool:{value}")));
+        let _ = ctx.emit(LanguageModelStreamChunkType::TextDelta(format!(
+            "tool:{value}"
+        )));
         Ok(value)
     }
 
@@ -172,7 +174,7 @@ mod tests {
         );
 
         match stream.next().await {
-            Some(LanguageModelStreamChunkType::Text(text)) => assert_eq!(text, "tool:payload"),
+            Some(LanguageModelStreamChunkType::TextDelta(text)) => assert_eq!(text, "tool:payload"),
             other => panic!("expected tool-emitted text chunk, got {other:?}"),
         }
     }

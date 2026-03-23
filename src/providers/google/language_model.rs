@@ -6,11 +6,8 @@ use crate::core::language_model::{
     LanguageModelStreamChunk, LanguageModelStreamChunkType, ProviderStream, Usage,
 };
 use crate::core::messages::AssistantMessage;
-use crate::providers::google::{
-    Google,
-    client::{self, types},
-    extensions,
-};
+use crate::core::tools::ToolDetails;
+use crate::providers::google::{Google, client, client::types, extensions};
 use crate::{
     core::{language_model::LanguageModel, tools::ToolCallInfo},
     error::Result,
@@ -97,6 +94,9 @@ impl<M: ModelName> LanguageModel for Google<M> {
             accumulated_text: String,
             accumulated_tool_call: Option<ToolCallInfo>,
             usage: Option<Usage>,
+            // Block-open tracking for symmetric Start/End events
+            text_open: bool,
+            tool_call_open: bool,
         }
 
         let stream = google_stream.scan(StreamState::default(), |state, evt_res| {
@@ -112,36 +112,102 @@ impl<M: ModelName> LanguageModel for Google<M> {
                         for part in &candidate.content.parts {
                             if let Some(t) = &part.text {
                                 state.accumulated_text.push_str(t);
+                                if !state.text_open {
+                                    state.text_open = true;
+                                    chunks.push(LanguageModelStreamChunk::Delta(
+                                        LanguageModelStreamChunkType::TextStart,
+                                    ));
+                                }
                                 chunks.push(LanguageModelStreamChunk::Delta(
-                                    LanguageModelStreamChunkType::Text(t.clone()),
+                                    LanguageModelStreamChunkType::TextDelta(t.clone()),
                                 ));
                             }
+
                             if let Some(fc) = &part.function_call {
                                 let mut tool_info = ToolCallInfo::new(fc.name.clone());
+                                tool_info.id(fc.name.clone()); // Google uses name as id
                                 tool_info.input(fc.args.clone());
+
                                 if let Some(sig) = &part.thought_signature {
                                     tool_info
                                         .extensions
                                         .get_mut::<extensions::GoogleToolMetadata>()
                                         .thought_signature = Some(sig.clone());
                                 }
+
+                                if !state.tool_call_open {
+                                    state.tool_call_open = true;
+                                    chunks.push(LanguageModelStreamChunk::Delta(
+                                        LanguageModelStreamChunkType::ToolCallStart(ToolDetails {
+                                            id: fc.name.clone(),
+                                            name: fc.name.clone(),
+                                        }),
+                                    ));
+                                }
+
                                 state.accumulated_tool_call = Some(tool_info);
 
                                 chunks.push(LanguageModelStreamChunk::Delta(
-                                    LanguageModelStreamChunkType::ToolCall(
-                                        serde_json::to_string(&fc).unwrap_or_default(),
-                                    ),
+                                    LanguageModelStreamChunkType::ToolCallDelta {
+                                        id: fc.name.clone(),
+                                        delta: serde_json::to_string(&fc.args).unwrap_or_default(),
+                                    },
                                 ));
                             }
                         }
 
-                        if candidate.finish_reason.is_some() {
-                            let content = if let Some(tc) = state.accumulated_tool_call.take() {
-                                LanguageModelResponseContentType::ToolCall(tc)
-                            } else {
-                                let text = std::mem::take(&mut state.accumulated_text);
-                                LanguageModelResponseContentType::Text(text)
-                            };
+                        if let Some(ref finish_reason) = candidate.finish_reason {
+                            use types::FinishReason;
+
+                            let (content, end_chunk) =
+                                if let Some(tc) = state.accumulated_tool_call.take() {
+                                    state.tool_call_open = false;
+                                    // Also close any text block that may have been open
+                                    if state.text_open {
+                                        state.text_open = false;
+                                        chunks.push(LanguageModelStreamChunk::Delta(
+                                            LanguageModelStreamChunkType::TextEnd,
+                                        ));
+                                    }
+
+                                    (LanguageModelResponseContentType::ToolCall(tc), None)
+                                } else {
+                                    let text = std::mem::take(&mut state.accumulated_text);
+                                    if state.text_open {
+                                        state.text_open = false;
+                                        chunks.push(LanguageModelStreamChunk::Delta(
+                                            LanguageModelStreamChunkType::TextEnd,
+                                        ));
+                                    }
+                                    // Map non-normal finish reasons to Failed / Incomplete
+                                    let extra = match finish_reason {
+                                        FinishReason::MaxTokens => {
+                                            Some(LanguageModelStreamChunk::Delta(
+                                                LanguageModelStreamChunkType::Incomplete(
+                                                    "max_tokens".to_string(),
+                                                ),
+                                            ))
+                                        }
+                                        FinishReason::Safety
+                                        | FinishReason::Recitation
+                                        | FinishReason::Blocklist
+                                        | FinishReason::ProhibitedContent
+                                        | FinishReason::Spii
+                                        | FinishReason::MalformedFunctionCall => {
+                                            Some(LanguageModelStreamChunk::Delta(
+                                                LanguageModelStreamChunkType::Failed(format!(
+                                                    "{finish_reason:?}"
+                                                )),
+                                            ))
+                                        }
+                                        _ => None,
+                                    };
+                                    (LanguageModelResponseContentType::Text(text), extra)
+                                };
+
+                            if let Some(extra) = end_chunk {
+                                chunks.push(extra);
+                            }
 
                             chunks.push(LanguageModelStreamChunk::Done(AssistantMessage {
                                 content,
@@ -533,7 +599,7 @@ mod tests {
 
         if matches!(
             first_item,
-            crate::core::language_model::LanguageModelStreamChunkType::Start
+            crate::core::language_model::LanguageModelStreamChunkType::TextStart
         ) {
             first_item = tokio::time::timeout(Duration::from_secs(1), stream.stream.next())
                 .await
@@ -542,10 +608,10 @@ mod tests {
         }
 
         match first_item {
-            crate::core::language_model::LanguageModelStreamChunkType::Text(text) => {
+            crate::core::language_model::LanguageModelStreamChunkType::TextDelta(text) => {
                 assert!(!text.is_empty())
             }
-            _ => panic!("Expected Text chunk"),
+            _ => panic!("Expected TextDelta chunk"),
         } // Hello will be returned in chunk
 
         let request = request_handle
@@ -620,7 +686,7 @@ mod tests {
 
         if matches!(
             first_item,
-            crate::core::language_model::LanguageModelStreamChunkType::Start
+            crate::core::language_model::LanguageModelStreamChunkType::TextStart
         ) {
             first_item = tokio::time::timeout(Duration::from_secs(1), stream.stream.next())
                 .await
@@ -629,10 +695,10 @@ mod tests {
         }
 
         match first_item {
-            crate::core::language_model::LanguageModelStreamChunkType::Text(text) => {
+            crate::core::language_model::LanguageModelStreamChunkType::TextDelta(text) => {
                 assert!(!text.is_empty())
             }
-            _ => panic!("Expected Text chunk"),
+            _ => panic!("Expected TextDelta chunk"),
         }
 
         let request = request_handle
