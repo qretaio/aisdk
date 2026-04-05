@@ -283,16 +283,20 @@ impl MessageBuilder<Conversation> {
 /// A message tagged with its step id in a list of messages
 /// used for tracking steps in a conversation
 #[derive(Debug, Clone)]
-pub(crate) struct TaggedMessage {
+pub struct TaggedMessage {
+    /// The step identifier for this message.
     pub step_id: usize,
+    /// The wrapped message.
     pub message: Message,
 }
 
 impl TaggedMessage {
+    /// Creates a new tagged message with the given step ID.
     pub fn new(step_id: usize, message: Message) -> Self {
         Self { step_id, message }
     }
 
+    /// Creates a tagged message in the initial step (step 0).
     pub fn initial_step_msg(message: Message) -> Self {
         Self {
             step_id: 0,
